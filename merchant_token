@@ -1,0 +1,3 @@
+Select distinct merchant_token
+from app_merch_growth.app_merch_growth_etl.sbs_bob_hierarchy sbh
+where sbh.business_id in ('100000123')
