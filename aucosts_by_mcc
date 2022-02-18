@@ -1,0 +1,67 @@
+with
+    date_range  as (
+                   select drp.report_date
+                   from app_bi.app_bi_dw.dim_report_period drp
+                   where (drp.report_date BETWEEN '2020-10-01'::DATE AND'2021-10-31'::DATE)      
+                    and drp.period_name = '01 Day'
+                   )
+   
+   ,merchants   as (
+                   select dm.merchant_token
+                   from app_bi.app_bi_dw.dim_merchant dm
+                   Where  MERCHANT_ACTIVATION_ADDRESS_COUNTRY_CODE = 'AU'  ----- US, CA, GB, AU
+                   )
+                   
+   ,processing  as (
+                   select
+//                    CASE																									
+//                        WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=20 THEN 'a: $0-$10'
+//                        WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<30 THEN 'b: $10-$15'																									
+//                        WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<600 THEN 'c: $300-6800'																									
+//                        WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)>200 THEN 'd: $200+'																									
+//                        ELSE '?'																									
+//                        END AS ticket_grouping
+//                    case 
+//                        when dps.card_presence = 'CP'                                                             then 'CP'
+//                        when pem.payment_entry_method = 'Invoicing'                                               then 'Invoicing'
+//                        when pem.payment_entry_method in ('Square Connect API','Square Connect API Card On File') then 'API'
+//                        when dps.card_presence = 'CNP'                                                            then 'CNP' 
+//                        else pem.payment_entry_method
+//                        end as payment_method
+//                      du.merchant_token
+                      du.Merchant_BUSINESS_CATEGORY
+                      ,sum(gpv_gross_local) - sum(gpv_voided_local) as gpv_gross
+                      ,sum(gpv_voided_local)                          as gpv_voided
+                      ,sum(gpv_refunded_local)                        as gpv_refunded
+                      ,sum(gpv_net_local)                             as gpv_net
+                      ,sum(transaction_count)                           as transactions
+                      ,sum(fee_total_combined_local)                  as transaction_costs
+                      ,sum(revenue_net_local)                         as net_revenue
+                      ,min(dps.report_date)                             as min_report_date
+                      ,max(dps.report_date)                             as max_report_date
+                   from
+                       app_bi.app_bi_dw.vfact_daily_processing_summary dps
+                       inner join app_bi.app_bi_dw.dim_payment_entry_method pem
+                               on dps.key_payment_entry_method = pem.key_payment_entry_method
+                       inner join APP_BI.APP_BI_DW.DIM_USER du
+                               on dps.user_token = du.user_token
+                       left join APP_BI.APP_BI_DW.DIM_MERCHANT dm
+                               on du.merchant_token = dm.merchant_token
+                   where du.merchant_token in (select merchant_token from merchants)
+                     and dps.report_date in (select report_date    from date_range)   
+                   Group By  1--,2--,4
+                   )
+                   
+select
+   p.MERCHANT_BUSINESS_CATEGORY
+//   ,ticket_grouping
+   ,p.gpv_gross
+   ,p.gpv_refunded
+   ,p.transactions
+   ,iff(p.gpv_net = 0, 0, p.transaction_costs      / p.gpv_net)      as transaction_cost_rate
+   ,iff(p.gpv_net = 0, 0, (p.net_revenue - p.transaction_costs)/p.gpv_net) as margin_rate
+   ,iff(p.gpv_net      = 0, 0, p.net_revenue/p.gpv_net)                   as square_rate
+   ,iff(p.transactions = 0, 0, p.gpv_gross              / p.transactions) as average_ticket
+from
+    processing p
+;			
