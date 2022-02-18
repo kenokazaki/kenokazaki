@@ -1,0 +1,135 @@
+with
+    date_range  as (
+                   select drp.report_date
+                   from app_bi.app_bi_dw.dim_report_period drp
+                   where (drp.report_date BETWEEN '2020-10-01'::DATE AND'2021-10-31'::DATE)      
+                    and drp.period_name = '01 Day'
+                   )
+   
+   ,merchants   as (
+                   select dm.merchant_token
+                   from app_bi.app_bi_dw.dim_merchant dm
+                   Where  MERCHANT_ACTIVATION_ADDRESS_COUNTRY_CODE = 'AU'  ----- US, CA, GB, AU
+                   )
+   
+   ,sales       as (
+                   SELECT distinct merchant_token FROM (
+                        (SELECT
+                            du.merchant_token AS merchant_token
+                        FROM app_sales.sales_comp.closed_deals cd
+                        JOIN app_sales.app_sales_etl.sfdc_square_accounts sa
+                            ON sa.sf_object_id = cd.opportunity_id
+                        JOIN app_bi.pentagon.dim_user du
+                            ON du.user_token = sa.sf_square_unit_token
+                            AND du.is_unit = 1
+                        LEFT JOIN app_sales.app_sales_etl.raw_bof bof
+                            ON du.merchant_token = bof.merchant_token
+                        LEFT JOIN app_sales.app_sales_etl.vw_fact_profit_oppty_historicals h
+                            ON du.merchant_token = h.merchant_token
+                        WHERE cd.sales_team IN ('Sales - MM', 'Sales - Retail', 'Sales - CA', 'Sales - Rest', 'Sales - UK', 'Sales - SMB', 'Sales - ENT', 'Sales - AU','Sales - JP')
+                        and bof.stage IN ('06 - Active','06 - Closed/Lost','06 - Closed/Won')
+                        )
+                  UNION
+                        (
+                        SELECT cd.merchant_token AS merchant_token
+                        FROM app_sales.sales_comp.closed_deals_amc cd
+                        LEFT JOIN app_sales.app_sales_etl.raw_bof_amc bof
+                            ON cd.merchant_token = bof.merchant_token
+                        LEFT JOIN app_sales.app_salesforce.opportunity_revenue_stats_amc rev
+                            ON cd.merchant_token = rev.merchant_token
+                        WHERE cd.sales_team IN ('Sales - MM', 'Sales - Retail', 'Sales - CA', 'Sales - Rest', 'Sales - UK', 'Sales - SMB', 'Sales - ENT', 'Sales - AU','Sales - JP')
+                        and bof.stage IN ('06 - Active','06 - Closed/Lost','06 - Closed/Won')
+                        )))                   
+
+   ,processing  as (
+                   select
+                    du.Merchant_Token
+                    ,CASE																									
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=2 then '$1.00 - $2.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=3 then '$2.00 - $3.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=4 then '$3.00 - $4.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=5 then '$4.00 - $5.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=6 then '$5.00 - $6.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=7 then '$6.00 - $7.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=8 then '$7.00 - $8.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=9 then '$8.00 - $9.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=10 then '$9.00 - $10.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=15 then '$10.00 - $15.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=20 then '$15.00 - $20.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=25 then '$20.00 - $25.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=50 then '$25.00 - $50.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=100 then '$50.00 - $100.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=250 then '$100.00 - $250.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=500 then '$250.00 - $500.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)<=1000 then '$500.00 - $1000.00'
+                     WHEN IFNULL(sum(gpv_gross_local)/nullif(sum(transaction_count),0),0)>1000 then '$1000.00+'
+                     ELSE '?'																									
+                     END AS ticket_grouping
+                   ,case when ifnull(sum(gpv_net_local) / Nullif((DATEDIFF(day,min(dps.report_date) ,(current_date - 1))/365),0),0) <250000 then '$0 - $250K'
+                      when ifnull(sum(gpv_net_local) / Nullif((DATEDIFF(day,min(dps.report_date) ,(current_date - 1))/365),0),0) <500000 then '$250K - $500K'
+                      when ifnull(sum(gpv_net_local) / Nullif((DATEDIFF(day,min(dps.report_date) ,(current_date - 1))/365),0),0) <1000000 then '$500K - $1M'
+                      when ifnull(sum(gpv_net_local) / Nullif((DATEDIFF(day,min(dps.report_date) ,(current_date - 1))/365),0),0) <=5000000 then '$1M - $5M'
+                      when ifnull(sum(gpv_net_local) / Nullif((DATEDIFF(day,min(dps.report_date) ,(current_date - 1))/365),0),0) >5000000 then '$5M+'
+                      end as annualized_GPV
+//                    case 
+//                        when dps.card_presence = 'CP'                                                             then 'CP'
+//                        when pem.payment_entry_method = 'Invoicing'                                               then 'Invoicing'
+//                        when pem.payment_entry_method in ('Square Connect API','Square Connect API Card On File') then 'API'
+//                        when dps.card_presence = 'CNP'                                                            then 'CNP' 
+//                        else pem.payment_entry_method
+//                        end as payment_method
+                      ,du.Merchant_BUSINESS_CATEGORY
+                      ,case when du.merchant_token in (select merchant_token from sales) then 1
+                            else 0
+                            end as sales_closed
+                      ,sum(gpv_gross_local) - sum(gpv_voided_local) as gpv_gross
+                      ,sum(gpv_voided_local)                        as gpv_voided
+                      ,sum(gpv_refunded_local)                      as gpv_refunded
+                      ,sum(gpv_net_local)                           as gpv_net
+                      ,sum(transaction_count)                       as transactions
+                      ,sum(fee_total_combined_local)                as transaction_costs
+                      ,sum(revenue_net_local)                       as net_revenue
+                      ,min(dps.report_date)                         as min_report_date
+                      ,max(dps.report_date)                         as max_report_date
+                   from app_bi.app_bi_dw.vfact_daily_processing_summary dps
+                   inner join app_bi.app_bi_dw.dim_payment_entry_method pem
+                     on dps.key_payment_entry_method = pem.key_payment_entry_method
+                   inner join APP_BI.APP_BI_DW.DIM_USER du
+                     on dps.user_token = du.user_token
+                   left join APP_BI.APP_BI_DW.DIM_MERCHANT dm
+                     on du.merchant_token = dm.merchant_token
+                   where du.merchant_token in (select merchant_token from merchants)
+                     and dps.report_date in (select report_date    from date_range)   
+                   Group By  1,4,5
+                   )
+
+    ,sums      as (
+                  select
+                    MERCHANT_BUSINESS_CATEGORY
+                    ,annualized_gpv
+                    ,ticket_grouping
+                    ,sales_closed
+                    ,sum(gpv_gross) - sum(gpv_voided) as gpv_gross
+                    ,sum(gpv_voided)                  as gpv_voided
+                    ,sum(gpv_refunded)                as gpv_refunded
+                    ,sum(gpv_net)                     as gpv_net
+                    ,sum(transactions)                as transactions
+                    ,sum(transaction_costs)           as transaction_costs
+                    ,sum(net_revenue)                 as net_revenue
+                  from processing
+                  group by 1,2,3,4
+                  )
+  
+select
+  MERCHANT_BUSINESS_CATEGORY                                    as MCC
+  ,annualized_gpv                                               as "Annualized GPV"
+  ,ticket_grouping                                              as "Average Ticket"
+  ,sales_closed                                                 as "Sales Closed"
+  ,transactions                                                 as "# Transactions"
+  ,gpv_net                                                      as "Net GPV"
+  ,iff(gpv_net = 0, 0, transaction_costs/gpv_net)               as "Transaction Cost"
+  ,iff(gpv_net = 0, 0, (net_revenue-transaction_costs)/gpv_net) as "Margin Rate"
+  ,iff(gpv_net = 0, 0, net_revenue/gpv_net)                     as "Square Rate"
+  ,iff(transactions = 0, 0, gpv_gross/transactions)             as "Average Ticket"
+from sums
+order by 1,2,3,4 desc
